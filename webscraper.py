@@ -2,6 +2,7 @@ from bs4 import BeautifulSoup
 import requests
 import json
 import os
+from urllib.parse import urljoin
 
 def search_images(url):
     try:
@@ -32,17 +33,42 @@ def search_images(url):
 
     return image_urls
 
+def find_urls(url):
+    try:
+        response = requests.get(url)
+        response.raise_for_status()  # Check if the request was successful
+    except requests.exceptions.RequestException as e:
+        print(f"Errore durante la richiesta: {e}")
+        return []
+
+    soup = BeautifulSoup(response.content, 'html.parser')
+    found_urls = set()  # Use a set to avoid duplicates
+
+    # Find all <a> tags with 'href' attribute
+    for link in soup.find_all('a', href=True):
+        href = link.get('href')
+        # Resolve relative URLs to absolute URLs
+        absolute_url = urljoin(url, href)
+        found_urls.add(absolute_url)
+
+    return list(found_urls)
+
 # URL of the page you want to get the images from
-url = 'https://www.liceosteamemilia.com/' 
+steam_url = 'https://www.liceosteamemilia.com/' 
 
 # Esegui lo scraping delle immagini
-image_urls = search_images(url)
-
+image_urls = search_images(steam_url)
+all_urls = find_urls(steam_url)
 # Create json dictionary
 data = {"image_urls": image_urls}
+urls = {"urls": all_urls}
+
 
 # Save images in data.json
 with open('data.json', 'w') as f:
     json.dump(data, f, indent=4)
+    json.dump(urls, f, indent=4)
     # Inform user that images have been saved 
     print("Image URLs have been saved to data.json")
+    print(f"Found {len(all_urls)} total URLs on the site {steam_url}.")
+    print("URLs have been saved to data.json.")
