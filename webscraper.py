@@ -1,31 +1,31 @@
-from flask import Flask, request, render_template_string
+from flask import Flask, request, render_template_string, session, redirect, url_for
 from bs4 import BeautifulSoup
 import requests
 import json
 import os
 from urllib.parse import urljoin, urlparse
 import sys
+import uuid
 
 app = Flask(__name__)
+app.secret_key = 'il_tuo_segreto_super_segreto_e_univoco'
 
-def progress_bar(progress, total): # Define a function to print a progres bar in the terminal
+def progress_bar(progress, total):
     if total == 0:
         percent = 0
     else:
         percent = 100 * (progress / float(total))
     
-    percent = min(percent, 100)  # Ensures that the maximum percentage is 100
+    percent = min(percent, 100)
     bar_length = int(percent)
-    bar = '█' * bar_length + '-' * (100 - bar_length) 
+    bar = '█' * bar_length + '-' * (100 - bar_length)
     sys.stdout.write('\r')
     sys.stdout.write(f"|{bar}| {percent:.2f}%")
     sys.stdout.flush()
 
-# Define set fo variablet to take track of visited urls and all the images found
 visited_urls = set()
 all_image_urls = set()
 
-# Define a function to search all the images in a url
 def search_images(url):
     try:
         response = requests.get(url)
@@ -33,7 +33,6 @@ def search_images(url):
 
         new_image_urls = set()
 
-        # If the content is HTML searches objects with tag <img>
         if response.headers.get('Content-Type', '').split(';')[0] == 'text/html':
             soup = BeautifulSoup(response.content, 'html.parser')
             images = soup.find_all('img')
@@ -45,25 +44,20 @@ def search_images(url):
                     else:
                         new_image_urls.add(urljoin(url, src))
 
-        # If content type is not HTML and there are no <img> tags left, it searches images directly in the answer
         if not new_image_urls:
             content_type = response.headers.get('Content-Type', '').split(';')[0]
             if content_type.startswith('image/'):
                 new_image_urls.add(url)
 
-        # Add the new images found to a global set of them
         all_image_urls.update(new_image_urls)
 
         return list(new_image_urls)
 
     except requests.exceptions.RequestException as e:
-        # print(f"Error requesting {url}: {e}")
         return []
     except Exception as e:
-        # print(f"Error parsing content from {url}: {e}")
         return []
 
-# Define a function to search all the possible accesstible urls from a single one
 def find_urls(url):
     try:
         response = requests.get(url)
@@ -75,47 +69,35 @@ def find_urls(url):
         soup = BeautifulSoup(response.content, 'html.parser')
         found_urls = set()
 
-        # Find all <a> tags with attribute 'href'
         for link in soup.find_all('a', href=True):
             href = link.get('href')
-            # Changes URL from relative to absolute
             absolute_url = urljoin(url, href)
-            # Ensures to not exit the initial domain
             if urlparse(absolute_url).netloc == urlparse(url).netloc:
                 found_urls.add(absolute_url)
 
         return list(found_urls)
 
     except requests.exceptions.RequestException as e:
-        # print(f"Error during request at {url}: {e}")
         return []
     except Exception as e:
-        # print(f"Error during HTML parsing of {url}: {e}")
         return []
 
-# Define a recursive function to search all the images in all urls
 def recursive_scrape(url, check_footer=True):
-    global all_urls  # Declare global variable
+    global all_urls
 
-    # If the url is already visited stop
     if url in visited_urls:
         return
     
-    # Adds the found url to the list of all the found urls
     visited_urls.add(url)
     
-    # Updates the progres bar
     progress_bar(len(visited_urls), len(all_urls))
 
-    # Starts scraping images
     image_urls = search_images(url)
-    progress_bar(len(visited_urls), len(all_urls))  # Regularly updates the progress bar
-    all_image_urls.update(image_urls)  # Updates directly the set with all the image urls
+    progress_bar(len(visited_urls), len(all_urls))
+    all_image_urls.update(image_urls)
     
-    # Finds new urls
     all_urls = find_urls(url)
     
-    # Starts the recursive part for every new url
     for new_url in all_urls:
         recursive_scrape(new_url, check_footer=False if url == start_url else True)
 
@@ -142,9 +124,49 @@ def index():
             "urls": list(visited_urls)
         }
 
-        return render_template_string(html_template, data=combined_data)
+        if not os.path.exists('static'):
+            os.makedirs('static')
 
-    return render_template_string(html_template, data=None)
+        filename = f"data_{uuid.uuid4().hex}.json"
+        filepath = os.path.join('static', filename)
+
+        with open(filepath, 'w') as f:
+            json.dump(combined_data, f, indent=4)
+        
+        print(f"Data saved to {filepath}")
+
+        session['data_file'] = filename
+        session['page'] = 0
+
+        return redirect(url_for('index'))
+
+    data_file = session.get('data_file')
+    page = session.get('page', 0)
+
+    if data_file:
+        filepath = os.path.join('static', data_file)
+        with open(filepath, 'r') as f:
+            combined_data = json.load(f)
+        start_idx = page * 50
+        end_idx = start_idx + 50
+        image_urls_page = combined_data['image_urls'][start_idx:end_idx]
+    else:
+        image_urls_page = []
+
+    return render_template_string(html_template, image_urls=image_urls_page, page=page, total=(len(combined_data['image_urls']) // 50) if data_file else 0)
+
+@app.route('/next')
+def next_page():
+    page = session.get('page', 0)
+    session['page'] = page + 1
+    return redirect(url_for('index'))
+
+@app.route('/prev')
+def prev_page():
+    page = session.get('page', 0)
+    if page > 0:
+        session['page'] = page - 1
+    return redirect(url_for('index'))
 
 html_template = """
 <!DOCTYPE html>
@@ -210,13 +232,32 @@ html_template = """
             padding: 10px;
             border: 1px solid #ddd;
             border-radius: 4px;
+            text-align: center;
         }
-        .results li a {
-            color: #333;
-            text-decoration: none;
+        .results li img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 4px;
         }
-        .results li a:hover {
-            text-decoration: underline;
+        .pagination {
+            text-align: center;
+            margin-top: 20px;
+        }
+        .pagination button {
+            padding: 10px 15px;
+            margin: 0 5px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .pagination button:hover {
+            background-color: #45a049;
+        }
+        .pagination button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
         }
     </style>
 </head>
@@ -229,20 +270,22 @@ html_template = """
                 <button type="submit">Scrape</button>
             </form>
         </div>
-        {% if data %}
+        {% if image_urls %}
         <div class="results">
-            <h2>Image URLs</h2>
+            <h2>Images</h2>
             <ul>
-                {% for img_url in data.image_urls %}
-                <li><a href="{{ img_url }}" target="_blank">{{ img_url }}</a></li>
+                {% for img_url in image_urls %}
+                <li><a href="{{ img_url }}" target="_blank"><img src="{{ img_url }}" alt="Image"></a></li>
                 {% endfor %}
             </ul>
-            <h2>All URLs</h2>
-            <ul>
-                {% for url in data.urls %}
-                <li><a href="{{ url }}" target="_blank">{{ url }}</a></li>
-                {% endfor %}
-            </ul>
+        </div>
+        <div class="pagination">
+            <form action="{{ url_for('prev_page') }}" method="get" style="display: inline;">
+                <button type="submit" {% if page == 0 %}disabled{% endif %}>Previous</button>
+            </form>
+            <form action="{{ url_for('next_page') }}" method="get" style="display: inline;">
+                <button type="submit" {% if page >= total %}disabled{% endif %}>Next</button>
+            </form>
         </div>
         {% endif %}
     </div>
