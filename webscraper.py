@@ -1,9 +1,12 @@
+from flask import Flask, request, render_template_string
 from bs4 import BeautifulSoup
 import requests
 import json
 import os
 from urllib.parse import urljoin, urlparse
 import sys
+
+app = Flask(__name__)
 
 def progress_bar(progress, total): # Define a function to print a progres bar in the terminal
     if total == 0:
@@ -116,32 +119,136 @@ def recursive_scrape(url, check_footer=True):
     for new_url in all_urls:
         recursive_scrape(new_url, check_footer=False if url == start_url else True)
 
-# This is the url we want to scrape
-start_url = 'https://www.liceosteamemilia.com/' 
+@app.route('/', methods=['GET', 'POST'])
+def index():
+    if request.method == 'POST':
+        global visited_urls, all_image_urls, all_urls, start_url
 
-# Initializes list to find all urls
-all_urls = []
+        visited_urls = set()
+        all_image_urls = set()
+        all_urls = []
 
-# Finds all the urls to estimate a total
-initial_urls = find_urls(start_url)
-total_urls = len(initial_urls) + 1  # Adds one to the begining urls
+        start_url = request.form['url']
+        
+        initial_urls = find_urls(start_url)
+        total_urls = len(initial_urls) + 1
 
-# Start the recursive scraping
-recursive_scrape(start_url)
+        recursive_scrape(start_url)
 
-# Converts the total in a list to store it properly
-all_image_urls_list = list(all_image_urls)
+        all_image_urls_list = list(all_image_urls)
 
-# Create a single json dictionaty which contains the two sub-dictionaries
-combined_data = {
-    "image_urls": all_image_urls_list,
-    "urls": list(visited_urls)
-}
+        combined_data = {
+            "image_urls": all_image_urls_list,
+            "urls": list(visited_urls)
+        }
 
-# Saves all the images in data.json
-with open('data.json', 'w') as f:
-    json.dump(combined_data, f, indent=4)
-    # Informs user about saved images information
-    print("\nGli URL delle immagini sono stati salvati in data.json")
-    print(f"Trovati {len(visited_urls)} URL totali sul sito {start_url}.")
-    print("Gli URL sono stati salvati in data.json.")
+        return render_template_string(html_template, data=combined_data)
+
+    return render_template_string(html_template, data=None)
+
+html_template = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Web Scraper</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f4;
+            color: #333;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            max-width: 900px;
+            margin: 50px auto;
+            background: #fff;
+            padding: 20px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+        h1 {
+            text-align: center;
+            color: #4CAF50;
+            font-size: 60px;
+        }
+        .input-container {
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        input[type="text"] {
+            width: 70%;
+            padding: 10px;
+            margin-right: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        button {
+            padding: 10px 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        .results {
+            margin-top: 20px;
+        }
+        .results h2 {
+            color: #4CAF50;
+        }
+        .results ul {
+            list-style-type: none;
+            padding: 0;
+        }
+        .results li {
+            background: #f9f9f9;
+            margin: 5px 0;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .results li a {
+            color: #333;
+            text-decoration: none;
+        }
+        .results li a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Web Scraper</h1>
+        <div class="input-container">
+            <form method="post">
+                <input type="text" name="url" placeholder="Enter URL" required>
+                <button type="submit">Scrape</button>
+            </form>
+        </div>
+        {% if data %}
+        <div class="results">
+            <h2>Image URLs</h2>
+            <ul>
+                {% for img_url in data.image_urls %}
+                <li><a href="{{ img_url }}" target="_blank">{{ img_url }}</a></li>
+                {% endfor %}
+            </ul>
+            <h2>All URLs</h2>
+            <ul>
+                {% for url in data.urls %}
+                <li><a href="{{ url }}" target="_blank">{{ url }}</a></li>
+                {% endfor %}
+            </ul>
+        </div>
+        {% endif %}
+    </div>
+</body>
+</html>
+"""
+
+if __name__ == "__main__":
+    app.run(debug=True)
